@@ -41,8 +41,8 @@ class BinPacker {
 }
 
 export interface PackResult {
-  spritesheets: { name: string; canvas: HTMLCanvasElement; transparentCanvas?: HTMLCanvasElement; transparentName?: string; previewUrl?: string; transparentPreviewUrl?: string }[];
-  standalones: { name: string; canvas: HTMLCanvasElement; transparentCanvas?: HTMLCanvasElement; transparentName?: string; previewUrl?: string; transparentPreviewUrl?: string }[];
+  spritesheets: { name: string; canvas: HTMLCanvasElement; jsonFilename?: string; jsonData?: any; transparentCanvas?: HTMLCanvasElement; transparentName?: string; previewUrl?: string; transparentPreviewUrl?: string }[];
+  standalones: { name: string; canvas: HTMLCanvasElement; jsonFilename?: string; jsonData?: any; transparentCanvas?: HTMLCanvasElement; transparentName?: string; previewUrl?: string; transparentPreviewUrl?: string }[];
   jsons: { filename: string; data: any }[];
   stats: {
     totalImages: number;
@@ -50,45 +50,61 @@ export interface PackResult {
   };
 }
 
-export async function packZip(
-  zipFile: File,
+export async function packImages(
+  inputFiles: File[],
   baseName: string = 'atlas',
   bgColor: 'transparent' | 'black' | 'both' = 'both',
   maxSize: number = 1024
 ): Promise<PackResult> {
-  const zip = new JSZip();
-  const loadedZip = await zip.loadAsync(zipFile);
-
-  const entries = Object.entries(loadedZip.files).filter(([path, file]) => !file.dir);
   const loadedImages: ({ name: string; img: HTMLImageElement } | null)[] = [];
 
-  // Read images in batches to prevent UI freezing
-  const BATCH_SIZE = 50;
-  for (let i = 0; i < entries.length; i += BATCH_SIZE) {
-    const batch = entries.slice(i, i + BATCH_SIZE);
-    
-    const batchPromises = batch.map(async ([path, file]) => {
-      const ext = path.split('.').pop()?.toLowerCase();
-      if (!['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext || '')) return null;
+  for (const file of inputFiles) {
+    if (file.name.toLowerCase().endsWith('.zip')) {
+      const zip = new JSZip();
+      const loadedZip = await zip.loadAsync(file);
 
-      const blob = await file.async('blob');
-      const url = URL.createObjectURL(blob);
+      const entries = Object.entries(loadedZip.files).filter(([path, f]) => !f.dir);
+      const BATCH_SIZE = 50;
       
+      for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+        const batch = entries.slice(i, i + BATCH_SIZE);
+        
+        const batchPromises = batch.map(async ([path, f]) => {
+          const ext = path.split('.').pop()?.toLowerCase();
+          if (!['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext || '')) return null;
+
+          const blob = await f.async('blob');
+          const url = URL.createObjectURL(blob);
+          
+          const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+            const i = new Image();
+            i.onload = () => resolve(i);
+            i.onerror = reject;
+            i.src = url;
+          });
+
+          return { name: path.split('/').pop() || path, img };
+        });
+
+        const results = await Promise.all(batchPromises);
+        loadedImages.push(...results);
+        
+        // Yield to main thread
+        await new Promise(r => setTimeout(r, 0));
+      }
+    } else {
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      if (!['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext || '')) continue;
+      
+      const url = URL.createObjectURL(file);
       const img = await new Promise<HTMLImageElement>((resolve, reject) => {
         const i = new Image();
         i.onload = () => resolve(i);
         i.onerror = reject;
         i.src = url;
       });
-
-      return { name: path.split('/').pop() || path, img };
-    });
-
-    const results = await Promise.all(batchPromises);
-    loadedImages.push(...results);
-    
-    // Yield to main thread
-    await new Promise(r => setTimeout(r, 0));
+      loadedImages.push({ name: file.name, img });
+    }
   }
 
   const images = loadedImages.filter((item): item is {name: string; img: HTMLImageElement} => item !== null);

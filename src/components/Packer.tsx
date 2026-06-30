@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Upload, Package, Download, Info, FileJson, Image as ImageIcon, Settings, X, ZoomIn } from 'lucide-react';
-import { packZip, PackResult, downloadPackResult } from '../lib/packer';
+import { packImages, PackResult, downloadPackResult } from '../lib/packer';
 
 export default function Packer() {
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<PackResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -12,7 +12,7 @@ export default function Packer() {
   const [autoProcess, setAutoProcess] = useState(true);
   const [baseName, setBaseName] = useState('atlas');
   const [bgColor, setBgColor] = useState<'transparent' | 'black' | 'both'>('both');
-  const [maxSize, setMaxSize] = useState(1024);
+  const [maxSize, setMaxSize] = useState(512);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -30,57 +30,103 @@ export default function Packer() {
     setIsDragging(false);
     
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const droppedFile = e.dataTransfer.files[0];
-      if (!droppedFile.name.endsWith('.zip')) {
-        setError('Please upload a .zip file');
-        return;
-      }
-      setFile(droppedFile);
-      setResult(null);
-      setError(null);
-      
-      if (autoProcess) {
-        await processZipFile(droppedFile, baseName, bgColor, maxSize);
-      }
+      handleFiles(Array.from(e.dataTransfer.files));
     }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const selectedFile = e.target.files[0];
-      setFile(selectedFile);
-      setResult(null);
-      setError(null);
-      
-      if (autoProcess) {
-        await processZipFile(selectedFile, baseName, bgColor, maxSize);
-      }
+      handleFiles(Array.from(e.target.files));
     }
   };
 
-  const processZipFile = async (f: File, name: string, bg: 'transparent' | 'black' | 'both', size: number) => {
+  const handleFiles = async (newFiles: File[]) => {
+    let validFiles = newFiles.filter(f => {
+      const name = f.name.toLowerCase();
+      return name.endsWith('.zip') || name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.webp') || name.endsWith('.gif');
+    });
+
+    if (validFiles.length === 0) {
+      setError('Please upload a .zip file or image files (max 500)');
+      return;
+    }
+
+    // Only allow max 500 image files
+    if (validFiles.length > 500) {
+      setError('You can only upload a maximum of 500 images at once.');
+      validFiles = validFiles.slice(0, 500);
+    }
+
+    setFiles(validFiles);
+    setResult(null);
+    setError(null);
+    
+    if (autoProcess) {
+      await processFiles(validFiles, baseName, bgColor, maxSize);
+    }
+  };
+
+  const processFiles = async (fs: File[], name: string, bg: 'transparent' | 'black' | 'both', size: number) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await packZip(f, name, bg, size);
+      const res = await packImages(fs, name, bg, size);
       setResult(res);
     } catch (err: any) {
-      setError(err.message || 'Failed to process ZIP file');
+      setError(err.message || 'Failed to process files');
     } finally {
       setLoading(false);
     }
   };
 
   const handleManualProcess = () => {
-    if (file) {
-      processZipFile(file, baseName, bgColor, maxSize);
+    if (files.length > 0) {
+      processFiles(files, baseName, bgColor, maxSize);
+    }
+  };
+
+  const handleDownloadBundle = (e: React.MouseEvent, item: any) => {
+    e.stopPropagation();
+    
+    // Download normal image
+    if (item.previewUrl && item.name) {
+      const aImg = document.createElement('a');
+      aImg.href = item.previewUrl;
+      aImg.download = item.name;
+      document.body.appendChild(aImg);
+      aImg.click();
+      document.body.removeChild(aImg);
+    }
+
+    // Download transparent image if exists
+    if (item.transparentPreviewUrl && item.transparentName) {
+      const aTrans = document.createElement('a');
+      aTrans.href = item.transparentPreviewUrl;
+      aTrans.download = item.transparentName;
+      document.body.appendChild(aTrans);
+      aTrans.click();
+      document.body.removeChild(aTrans);
+    }
+    
+    // Download json if exists
+    if (item.jsonData && item.jsonFilename) {
+      const jsonStr = JSON.stringify(item.jsonData, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const aJson = document.createElement('a');
+      aJson.href = url;
+      aJson.download = item.jsonFilename;
+      document.body.appendChild(aJson);
+      aJson.click();
+      document.body.removeChild(aJson);
+      URL.revokeObjectURL(url);
     }
   };
 
   return (
     <div className="space-y-8">
       <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
-        <h2 className="text-xl font-semibold mb-4 text-gray-800">1. Upload ZIP containing images</h2>
+        <h2 className="text-xl font-semibold mb-4 text-gray-800">1. Upload ZIP or Multiple Images (Max 500)</h2>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6 p-4 bg-gray-50 rounded-xl border border-gray-100">
           <div>
@@ -148,15 +194,17 @@ export default function Packer() {
             <div className="flex flex-col items-center justify-center pt-5 pb-6 pointer-events-none">
               <Upload className={`w-10 h-10 mb-3 ${isDragging ? 'text-blue-500' : 'text-gray-400'}`} />
               <p className="mb-2 text-sm text-gray-500"><span className="font-semibold">Click to upload</span> or drag and drop</p>
-              <p className="text-xs text-gray-500">.zip files only</p>
+              <p className="text-xs text-gray-500">.zip or image files (png, jpg, etc.)</p>
             </div>
-            <input id="dropzone-file" type="file" className="hidden" accept=".zip" onChange={handleFileChange} />
+            <input id="dropzone-file" type="file" multiple className="hidden" accept=".zip,image/png,image/jpeg,image/webp,image/gif" onChange={handleFileChange} />
           </label>
         </div>
         
-        {file && (
+        {files.length > 0 && (
           <div className="mt-4 p-4 bg-blue-50 text-blue-700 rounded-lg flex items-center justify-between">
-            <span className="font-medium truncate">{file.name}</span>
+            <span className="font-medium truncate">
+              {files.length === 1 ? files[0].name : `${files.length} files selected`}
+            </span>
             {!autoProcess && (
               <button 
                 onClick={handleManualProcess} 
@@ -275,8 +323,17 @@ export default function Packer() {
                           alt={sheet.name}
                           className="w-full h-auto transition-transform duration-200 group-hover:scale-[1.02]"
                         />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                          <ZoomIn className="text-white w-8 h-8" />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
+                          <button className="p-2 bg-white/20 hover:bg-white/40 rounded-full transition-colors" title="Zoom">
+                            <ZoomIn className="text-white w-6 h-6" />
+                          </button>
+                          <button 
+                            className="p-2 bg-blue-600/80 hover:bg-blue-600 rounded-full transition-colors" 
+                            title="Download All Files (JSON, Image, Transparent)"
+                            onClick={(e) => handleDownloadBundle(e, sheet)}
+                          >
+                            <Download className="text-white w-6 h-6" />
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -294,8 +351,17 @@ export default function Packer() {
                             alt={sheet.transparentName}
                             className="w-full h-auto transition-transform duration-200 group-hover:scale-[1.02]"
                           />
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <ZoomIn className="text-white w-8 h-8" />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
+                            <button className="p-2 bg-white/20 hover:bg-white/40 rounded-full transition-colors" title="Zoom">
+                              <ZoomIn className="text-white w-6 h-6" />
+                            </button>
+                            <button 
+                              className="p-2 bg-blue-600/80 hover:bg-blue-600 rounded-full transition-colors" 
+                              title="Download All Files (JSON, Image, Transparent)"
+                              onClick={(e) => handleDownloadBundle(e, sheet)}
+                            >
+                              <Download className="text-white w-6 h-6" />
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -317,8 +383,17 @@ export default function Packer() {
                           alt={item.name}
                           className="w-full h-auto transition-transform duration-200 group-hover:scale-[1.02]"
                         />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                          <ZoomIn className="text-white w-8 h-8" />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
+                          <button className="p-2 bg-white/20 hover:bg-white/40 rounded-full transition-colors" title="Zoom">
+                            <ZoomIn className="text-white w-6 h-6" />
+                          </button>
+                          <button 
+                            className="p-2 bg-blue-600/80 hover:bg-blue-600 rounded-full transition-colors" 
+                            title="Download All Files (JSON, Image, Transparent)"
+                            onClick={(e) => handleDownloadBundle(e, item)}
+                          >
+                            <Download className="text-white w-6 h-6" />
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -336,8 +411,17 @@ export default function Packer() {
                             alt={item.transparentName}
                             className="w-full h-auto transition-transform duration-200 group-hover:scale-[1.02]"
                           />
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <ZoomIn className="text-white w-8 h-8" />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
+                            <button className="p-2 bg-white/20 hover:bg-white/40 rounded-full transition-colors" title="Zoom">
+                              <ZoomIn className="text-white w-6 h-6" />
+                            </button>
+                            <button 
+                              className="p-2 bg-blue-600/80 hover:bg-blue-600 rounded-full transition-colors" 
+                              title="Download All Files (JSON, Image, Transparent)"
+                              onClick={(e) => handleDownloadBundle(e, item)}
+                            >
+                              <Download className="text-white w-6 h-6" />
+                            </button>
                           </div>
                         </div>
                       </div>
