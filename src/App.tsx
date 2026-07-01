@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Package, Scissors } from 'lucide-react';
+import { Package, Scissors, Image as ImageIcon } from 'lucide-react';
 import Packer from './components/Packer';
 import Unpacker from './components/Unpacker';
+import Repacker from './components/Repacker';
 import PerformanceMonitor from './components/PerformanceMonitor';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'pack' | 'unpack'>('pack');
+  const [activeTab, setActiveTab] = useState<'pack' | 'unpack' | 'repack'>('pack');
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 font-sans selection:bg-blue-100">
@@ -44,11 +45,24 @@ export default function App() {
               <Scissors className="w-4 h-4" />
               Unpack Spritesheets
             </button>
+            <button
+              onClick={() => setActiveTab('repack')}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all duration-200 ${
+                activeTab === 'repack' 
+                  ? 'bg-blue-50 text-blue-700 shadow-sm' 
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <ImageIcon className="w-4 h-4" />
+              Repack Images
+            </button>
           </div>
         </div>
 
         <main className="transition-all duration-300">
-          {activeTab === 'pack' ? <Packer /> : <Unpacker />}
+          {activeTab === 'pack' && <Packer />}
+          {activeTab === 'unpack' && <Unpacker />}
+          {activeTab === 'repack' && <Repacker />}
         </main>
       </div>
       <PerformanceMonitor />
